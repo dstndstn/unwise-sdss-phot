@@ -1,0 +1,203 @@
+
+There are three major runs of the code:
+
+-used for SEQUELS targeting
+-used for eBOSS targeting, aka "sdss2"
+-W1-W4 "sdss3"
+
+and some miscellaneous notes follow.
+
+-----------------------------------
+SEQUELS
+-----------------------------------
+
+These files contain version information about the input unWISE files:
+sequels-phot-versions.txt.gz
+sequels-unwise-versions.txt.gz
+
+SEQUELS target selection, "v5", 2013-10-29
+scripts/sequels-12.pbs:
+    python -u sequels.py -d data/sequels-phot-5 --blocks 1 --ceres -B 8 --dataset sequels -b 1234
+python -u sequels.py -d data/sequels-phot-5 --finish --dataset sequels --pobj data/sequels-pobj-5/
+
+# bonus flat file:
+python -u sequels.py --dataset sequels -d data/sequels-phot-5 --finish --flat sequels-phot-v5.fits
+
+wise-coadds -> /clusterfs/riemann/raid000/dstn/unwise/unwise/
+data -> /clusterfs/riemann/raid000/dstn
+
+(for x in data/sequels-phot-5/*.fits; do echo; echo $x; listhead $x | grep SEQ_; done) > sequels-phot-versions.txt
+gzip sequels-phot-versions.txt
+
+(for x in wise-coadds/*/*/*-img-m.fits; do echo; echo $x; listhead $x | grep UNW; done) > sequels-unwise-versions.txt
+gzip sequels-unwise-versions.txt
+
+
+-----------------------------------
+eBOSS, aka "sdss2"
+-----------------------------------
+
+These files contain version information about the input unWISE files:
+sequels-phot-versions-sdss.txt.gz
+sequels-unwise-versions-sdss.txt.gz
+
+# "sdss2" whole-footprint W1/W2:
+scripts/sequels-12.pbs, as before.
+
+python -u sequels.py --dataset sdss --finish data/sequels-phot-5/phot-unsplit-*.fits > fin.log
+(at r24313)
+
+Later, found that at least one tile failed: 2586p651 (index 6327).
+
+mkdir data/redo
+cp data/sequels-phot-5/phot-2586p651.fits data/redo/
+python -u sequels.py --dataset sdss -d data/redo --pobj data/redo --finish --split data/redo/phot-2586p651.fits > redo-1.log 2>&1 &
+cp data/sequels-phot-5/phot-unsplit-{2551p651,2543p636,2560p666,2576p636,2635p666,2621p651,2609p636,2597p666}.fits data/redo/
+python -u sequels.py --dataset sdss -d data/redo --pobj data/redo --finish data/redo/phot-unsplit-*.fits > redo-2.log 2>&1
+
+Hand-edit list of files produced, cutting down to just the run/camcol/fields touched by 2586p651 (listed in redo-1.log)
+Copy those files into place.
+
+Next, Adam found that one source from photoObj 1365/6/68 is missing.
+Turns out my WISE/SDSS search radius was a touch too small and I just
+barely missed WISE tile 1621p681 (and 7 other tiles) which contains
+that source.  Tweak unwise/sdss-footprint-wise.py, creating
+sdss2-atlas.fits.
+python -u sequels.py --dataset sdss2 -d data/redo --pobj data/redo --tempdir data/redo -v --split 7175 --tiledir data/unwise/unwise-nersc/ > redo-3.log 2>&1
+cp data/sequels-phot-5/phot-unsplit-{1670p666,1632p666,1661p681,1595p666,1582p681,1590p696}.fits data/redo
+python -u sequels.py --dataset sdss -d data/redo --pobj data/redo --finish data/redo/phot-unsplit-*.fits > redo-4.log 2>&1
+
+These new tiles affect the splitting of existing tiles -- their
+neighbors previously did not exist (in the atlas file) so did not
+split SDSS fields.
+
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split \
+data/sequels-phot-5/phot-????????.fits data/redo/phot-????????.fits > fin3.log 2>&1 &
+
+ls data/sequels-phot-5/phot-????????.fits data/redo/phot-????????.fits > lst
+tail -n    +1 lst | head -n 1000 > lst.1
+tail -n +1001 lst | head -n 1000 > lst.2
+tail -n +2001 lst | head -n 1000 > lst.3
+tail -n +3001 lst | head -n 1000 > lst.4
+tail -n +4001 lst | head -n 1000 > lst.5
+tail -n +5001 lst | head -n 1000 > lst.6
+tail -n +6001 lst | head -n 1000 > lst.7
+tail -n +7001 lst | head -n 1000 > lst.8
+
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.1) > fin3-1.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.2) > fin3-2.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.3) > fin3-3.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.4) > fin3-4.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.5) > fin3-5.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.6) > fin3-6.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.7) > fin3-7.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish --split $(cat lst.8) > fin3-8.log 2>&1 &
+
+python -u sequels.py --dataset sdss2 -d data/redo3 --pobj data/redo3 --tempdir data/redo3 --finish data/redo3/phot-unsplit-*.fits --no-threads > fin4.log 2>&1 &
+
+python -u check-wise.py > chk5.log 2>&1 &
+# starting from the end,
+python -u check-wise.py > chk6.log 2>&1 &
+
+One glitch turned up: 2566/2/329, where one tile thinks the field is
+totally within, so writes the output during splitting.  Another tile
+contains a single source (at y coord -0.2), so overwrites the output
+file. Patch up:
+
+python -u sequels.py --dataset sdss2 -d data/redo4 --pobj data/redo4 --tempdir data/redo4 --finish --split data/sequels-phot-5/phot-0031p136.fits --no-threads > fin5.log
+python -u sequels.py --dataset sdss2 -d data/redo4 --pobj data/redo4 --tempdir data/redo4 --finish data/redo4/phot-unsplit-0031p136.fits data/redo3/phot-unsplit-0031p151.fits --no-threads > fin6.log 2>&1 &
+
+ cp data/redo3/301/2566/2/photoWiseForced-002566-2-0329.fits data/redo4/redo3-photoWiseForced-002566-2-0329.fits
+ cp data/redo4/301/2566/2/photoWiseForced-002566-2-0329.fits data/redo3/301/2566/2/
+
+Argh, 4334/3/15 -- tile 0461p106 -- phot output file was written, but
+empty; photoobjs non-empty.  Log file looks like it timed out?
+
+cp sdss-phot-temp/photoobjs-0461p106.fits data/redo5/
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 -v --split --tiledir data/unwise/unwise/ 955 > redo-5.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish data/redo3/phot-unsplit-{0476p106,0459p090,0474p090,0446p106,0463p121,0478p121}.fits data/redo5/phot-unsplit-0461p106.fits --no-threads > redo-5b.log 2>&1 &
+
+ cp -a data/redo3/301/4334 data/redo5/run-4334-redo3
+ cp data/redo5/301/4334/3/photoWiseForced-004334-3-00{13,14,15,16,17}.fits data/redo3/301/4334/3/
+ cp data/redo5/301/4334/4/photoWiseForced-004334-4-00{11,18,19}.fits data/redo3/301/4334/4/
+ cp data/redo5/301/4334/5/photoWiseForced-004334-5-0020.fits data/redo3/301/4334/5/
+ cp data/redo5/301/4334/6/photoWiseForced-004334-6-00{11,18,19,20}.fits data/redo3/301/4334/6/
+ 
+And 4874/4/698 --
+
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish --split data/sequels-phot-5/phot-0408p000.fits --no-threads > fin7.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish data/redo5/phot-unsplit-0408p000.fits data/redo3/phot-unsplit-0423p000.fits --no-threads > fin8.log 2>&1 &
+
+ cp data/redo3/301/4874/4/photoWiseForced-004874-4-0698.fits data/redo5/
+ cp data/redo5/301/4874/4/photoWiseForced-004874-4-0698.fits data/redo3/301/4874/4/
+
+And 3630/2/220 --
+
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish --split data/sequels-phot-5/phot-1501p090.fits --no-threads > fin9.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish data/redo5/phot-unsplit-1501p090.fits data/redo3/phot-unsplit-{1492p106,1485p090}.fits --no-threads > fin10.log 2>&1 &
+
+ cp data/redo3/301/3630/2/photoWiseForced-003630-2-0220.fits data/redo5/
+ cp data/redo5/301/3630/2/photoWiseForced-003630-2-0220.fits data/redo3/301/3630/2/
+
+And 4136/3/206 and 4136/5/206
+
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish --split data/sequels-phot-5/phot-0574p000.fits --no-threads > fin11.log 2>&1 &
+python -u sequels.py --dataset sdss2 -d data/redo5 --pobj data/redo5 --tempdir data/redo5 --finish data/redo5/phot-unsplit-0574p000.fits data/redo3/phot-unsplit-0589p000.fits --no-threads > fin12.log 2>&1 &
+
+2014-03-02, Adam reported that several fields are missing.  Appears I
+re-ran the tile and copied over fields on the edges but not fields in
+the middle.
+
+ cp data/redo5/301/4334/4/photoWiseForced-004334-4-001[2-7].fits data/redo3/301/4334/4/
+ cp data/redo5/301/4334/5/photoWiseForced-004334-5-001[1-9].fits data/redo3/301/4334/5/
+ cp data/redo5/301/4334/6/photoWiseForced-004334-6-001[2-7].fits data/redo3/301/4334/6/
+
+
+-----------------------------------
+"sdss3"
+-----------------------------------
+This was done after I discovered the "rchi" bug that was causing too many
+WISE input frames to be rejected from W3 and W4 exposures.
+
+# Later, whole SDSS footprint, W1-W4.  2014-05-01+, named "sdss3".
+
+qdo version 0.5 + "batchopts" fix + "ordering" fix
+tractor/ and astrometry/ directories up to date (2014-05-01)
+
+# re-use sdss2-atlas, but sort by Dec (for WISE catalog speed):
+tabsort dec sdss2-atlas.fits sdss3-atlas.fits
+mkdir sdss3-phot-temp
+cp -v sdss2-phot-temp/photoobjs-* sdss3-phot-temp/
+
+# Grab WISE catalogs... in Dec order, for speed
+tabsort dec sdss2-atlas.fits sdss3dec-atlas.fits
+python -u forcedphot.py --dataset sdss3dec --tempdir sdss3-phot-temp/ --wise-only 0-8343 > w.log 2>&1 &
+
+qdo create sdss3
+seq 0 8342 | qdo load sdss3 -
+
+qdo launch sdss3 1 --script scripts/qdo-sdss3.sh --batchopts "-t 0-9"
+
+python -u forcedphot.py --dataset sdss3 --finish --no-threads sdss3-phot/phot-unsplit-*.fits > fin.log 2>&1 &
+
+(for x in wise-coadds/*/*/*-img-m.fits; do echo; echo $x; listhead $x | grep UNW; done) > unwise-versions-sdss3.txt
+gzip unwise-versions-sdss3.txt
+
+photoObjs-new -> /clusterfs/riemann/raid007/ebosswork/eboss/photoObj.v5b
+photoResolve-new -> /clusterfs/riemann/raid006/bosswork/boss/resolve/2013-07-29
+wise-coadds -> data/unwise/unwise-comp
+
+-----------------------------------
+Misc
+-----------------------------------
+
+''' CFHT-LS W3 test area
+http://terapix.iap.fr/article.php?id_article=841
+wget 'ftp://ftpix.iap.fr/pub/CFHTLS-zphot-T0007/photozCFHTLS-W3_270912.out.gz'
+gunzip photozCFHTLS-W3_270912.out.gz 
+text2fits.py -n "*********" -f sddjjffffffjfjffffffjfffjffffffffffffffffff -H "id ra dec flag stargal r2 photoz zpdf zpdf_l68 zpdf_u168 chi2_zpdf mod ebv nbfilt zmin zl68 zu68 chi2_best zp_2 chi2_2 mods chis zq chiq modq u g r i z y eu eg er ei ez ey mu mg mr mi mz my" photozCFHTLS-W3_270912.out photozCFHTLS-W3_270912.fits
+'''
+
+''' Stripe82 deep QSO plates (RA 36-42): see deepqso.py for notes.
+'''
+
