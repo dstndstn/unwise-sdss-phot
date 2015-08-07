@@ -66,14 +66,14 @@ DATASET-atlas.fits
   the coadd tiles to process
 
 (--tiledir)
-tiledir ("wise-coadds")/xxx/xxxx[pm]xxx/unwise-xxxx[pm]xxx-wW-img-m.fits
+tiledir ("unwise-coadds")/xxx/xxxx[pm]xxx/unwise-xxxx[pm]xxx-wW-img-m.fits
                              and {invvar,std,n}-m.fits
   WISE coadd tiles
 
-(--photoobjsdir) photoobjdir: photoObjs-new/301/R/C/...
+(--photoobjsdir) photoobjdir: photoObjs/301/R/C/...
   SDSS photoObj files
 
-(--resolvedir) ("photoResolve-new")/window_flist.fits
+(--resolvedir) ("photoResolve")/window_flist.fits
   SDSS list of  files
 
 (--tempdir) tempoutdir: ("DATASET-phot-temp")/photoobjs-TILE.fits
@@ -703,7 +703,31 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                           'unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
                           (coadd_id, f.scan_id, f.frame_num, band))
         print 'Looking for unWISE mask', fn
-        umask = fitsio.FITS(fn)[0][slc]
+        if os.path.exists(fn):
+            umask = fitsio.FITS(fn)[0][slc]
+        else:
+            tgzfn = os.path.join(unwdir, 
+                                 'unwise-%s-w%i-mask.tgz' % (coadd_id, band))
+            print 'Looking for tgz', tgzfn
+            maskdir = 'unwise-%s-w%i-mask' % (coadd_id, band)
+            maskfn = maskdir + ('/unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
+                                (coadd_id, f.scan_id, f.frame_num, band))
+            # extract in temp dir
+            import tempfile
+            tempdir = tempfile.mkdtemp()
+            cmd = 'tar xf %s -C %s %s' % (tgzfn, tempdir, maskfn)
+            print cmd
+            from astrometry.util.run_command import run_command
+            rtn,txt,err = run_command(cmd)
+            if rtn:
+                raise RuntimeError('Failed to untar mask file')
+            print txt
+            umask = fitsio.FITS(os.path.join(tempdir, maskfn))[0][slc]
+
+            os.unlink(os.path.join(tempdir, maskfn))
+            os.rmdir(os.path.join(tempdir, maskdir))
+            os.rmdir(tempdir)
+
         n0 = np.sum(invvar > 0)
         invvar[umask > 0] = 0.
         print 'Masked', n0 - np.sum(invvar > 0), 'pixels from unWISE'
@@ -1855,9 +1879,9 @@ def main():
                       help='Ensure WISE file exists and then quit?')
 
     parser.add_option('--photoobjsdir', help='Set photoObj input directory',
-                      default='photoObjs-new')
+                      default='photoObjs')
     parser.add_option('--resolvedir', help='Set resolve input directory',
-                      default='photoResolve-new')
+                      default='photoResolve')
 
     parser.add_option('-p', dest='pickle', default=False, action='store_true',
                       help='Save .pickle file for debugging purposes')
