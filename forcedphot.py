@@ -1953,24 +1953,32 @@ def main():
     print 'Reading', fn
     T = fits_table(fn)
 
-    version = get_svn_version()
-    print 'SVN version info:', version
+    version = {}
+    from astrometry.util.run_command import run_command
+    for key,cmd in [('Revision', 'git describe'),
+                    ('URL', 'git config --get remote.origin.url'),
+                    ]:
+        rtn,txt,err = run_command(cmd)
+        if rtn:
+            raise RuntimeError('Failed to get version string (%s):' % cmd + txt + err)
+        txt = txt.strip()
+        version[key] = txt
 
     hdr = fitsio.FITSHDR()
-    hdr.add_record(dict(name='SEQ_VER', value=version['Revision'],
-                        comment='SVN revision'))
-    hdr.add_record(dict(name='SEQ_URL', value=version['URL'], comment='SVN URL'))
-    hdr.add_record(dict(name='SEQ_DATE', value=datetime.datetime.now().isoformat(),
+    hdr.add_record(dict(name='WPHO_VER', value=version['Revision'],
+                        comment='Git describe'))
+    hdr.add_record(dict(name='WPHO_URL', value=version['URL'], comment='Git URL'))
+    hdr.add_record(dict(name='WPHO_DATE', value=datetime.datetime.now().isoformat(),
                         comment='forced phot run time'))
-    hdr.add_record(dict(name='SEQ_SKY', value=opt.sky, comment='fit sky?'))
+    hdr.add_record(dict(name='WPHO_SKY', value=opt.sky, comment='fit sky?'))
     for band in opt.bands:
         minsig = getattr(opt, 'minsig%i' % band)
-        hdr.add_record(dict(name='SEQ_MNS%i' % band, value=minsig,
+        hdr.add_record(dict(name='WPHO_MNS%i' % band, value=minsig,
                             comment='min surf brightness in sig, band %i' % band))
-    hdr.add_record(dict(name='SEQ_CERE', value=opt.ceres, comment='use Ceres?'))
-    hdr.add_record(dict(name='SEQ_ERRF', value=opt.errfrac, comment='error flux fraction'))
+    hdr.add_record(dict(name='WPHO_CERE', value=opt.ceres, comment='use Ceres?'))
+    hdr.add_record(dict(name='WPHO_ERRF', value=opt.errfrac, comment='error flux fraction'))
     if opt.ceres:
-        hdr.add_record(dict(name='SEQ_CEBL', value=opt.ceresblock,
+        hdr.add_record(dict(name='WPHO_CEBL', value=opt.ceresblock,
                         comment='Ceres blocksize'))
     
     if opt.plotbase is None:
