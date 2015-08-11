@@ -1034,7 +1034,9 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             set_bright_psf_mods(cat, WISE, T, opt.bright1, band, tile, wcs, sourcerad)
 
         flux_invvars = np.zeros(len(cat))
-        fskeys = ['prochi2', 'pronpix', 'profracflux', 'proflux', 'npix', 'pronexp']
+        fskeys = ['prochi2', 'pronpix', 'profracflux', 'proflux', 'npix']
+        if not opt.l1b:
+            fskeys.append('pronexp')
         fitstats = dict([(k, np.zeros(len(cat))) for k in fskeys])
 
         if ps:
