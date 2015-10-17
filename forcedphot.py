@@ -1150,11 +1150,15 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         if not opt.l1b:
             kwa.update(fitstat_extras=[('pronexp', [tim.nims])])
 
+        if use_ceres:
+            from tractor.ceres_optimizer import CeresOptimizer
+            tractor.optimizer = CeresOptimizer(BW=opt.ceresblock,
+                                               BH=opt.ceresblock)
+
         R = tractor.optimize_forced_photometry(
             minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
             fitstats=True, 
             variance=True, shared_params=False,
-            use_ceres=opt.ceres, BW=opt.ceresblock, BH=opt.ceresblock,
             wantims=wantims, negfluxval=0.1*sig1, **kwa)
         print 'That took', Time()-t0
 
