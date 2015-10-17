@@ -1131,7 +1131,6 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         print 'Sources:', len(srci), 'in the box,', len(I)-len(srci), 'in the margins, and', len(J), 'WISE-only'
         print 'Creating a Tractor with images', [t.shape for t in tims], 'and', len(subcat), 'sources'
         tractor = Tractor(tims, subcat)
-        tractor.disable_cache()
 
         print 'Running forced photometry...'
         t0 = Time()
@@ -1856,6 +1855,14 @@ def main():
     global photoobjdir
     global resolvedir
 
+    import datetime
+    import sys
+    import os
+    print 'forcedphot.py starting at', datetime.datetime.now().isoformat()
+    print 'command-line args:', sys.argv
+    print 'git describe:'
+    os.system('git describe')
+
     parser = optparse.OptionParser('%prog [options]')
     parser.add_option('--minsig1', dest='minsig1', default=0.1, type=float)
     parser.add_option('--minsig2', dest='minsig2', default=0.1, type=float)
@@ -2060,7 +2067,6 @@ def main():
             except:
                 pass
 
-    # don't need this
     disable_galaxy_cache()
 
     tiles = []
