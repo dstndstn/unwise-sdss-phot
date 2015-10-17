@@ -1150,7 +1150,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         if not opt.l1b:
             kwa.update(fitstat_extras=[('pronexp', [tim.nims])])
 
-        if use_ceres:
+        if opt.ceres:
             from tractor.ceres_optimizer import CeresOptimizer
             tractor.optimizer = CeresOptimizer(BW=opt.ceresblock,
                                                BH=opt.ceresblock)
@@ -1190,9 +1190,11 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             (dat,mod,ie,chi,roi) = ims1[0]
 
             tag = 'fit-%s-w%i' % (tile.coadd_id, band)
-            fitsio.write('%s-data.fits' % tag, dat, clobber=True)
-            fitsio.write('%s-mod.fits' % tag,  mod, clobber=True)
-            fitsio.write('%s-chi.fits' % tag,  chi, clobber=True)
+            pat = os.path.join(opt.outdir, '%s-%%s.fits' % tag)
+            for name,data in [('data',dat),('mod',mod),('chi',chi)]:
+                fn = pat % name
+                fitsio.write(fn, data, clobber=True)
+                print 'Wrote', fn
 
         if ps:
             tag = '%s W%i' % (tile.coadd_id, band)
