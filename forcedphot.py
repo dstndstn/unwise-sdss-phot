@@ -593,11 +593,11 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
     ok,u,v = cowcs.radec2iwc(r,d)
     copoly = np.array(list(reversed(zip(u,v))))
 
-    sky = 0.
+    cosky = 0.
     if l1bsky:
         hdr = fitsio.read_header(coimfn)
-        sky = hdr['UNW_SKY']
-        print 'Read sky value of', sky, 'from coadd header'
+        cosky = hdr['UNW_SKY']
+        print 'Read sky value of', cosky, 'from coadd header'
 
     print 'Reading PSF from', psffn
     P = fits_table(psffn, hdu=band)
@@ -747,9 +747,9 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         img *= zpscale
         # the invvar is *already* in nanomaggies units.
 
-        if sky != 0:
-            print 'Subtracting off coadd sky level of', sky
-            img -= sky
+        if cosky != 0:
+            print 'Subtracting off coadd sky level of', cosky
+            img -= cosky
 
         # WCS for the sub-image...
         h,w = img.shape
