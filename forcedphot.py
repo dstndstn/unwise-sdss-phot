@@ -579,7 +579,7 @@ def _get_photoobjs(tile, wcs, bandnum, existOnly):
 
 
 def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
-                               psffn):
+                               psffn, l1bsky):
     from unwise_coadd import walk_wcs_boundary, zeropointToScale
 
     # All this is required to get the L1b image extents
@@ -592,6 +592,12 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
     r,d = walk_wcs_boundary(cowcs, step=W, margin=0)
     ok,u,v = cowcs.radec2iwc(r,d)
     copoly = np.array(list(reversed(zip(u,v))))
+
+    sky = 0.
+    if l1bsky:
+        hdr = fitsio.read_header(coimfn)
+        sky = hdr['UNW_SKY']
+        print 'Read sky value of', sky, 'from coadd header'
 
     print 'Reading PSF from', psffn
     P = fits_table(psffn, hdu=band)
@@ -740,6 +746,14 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         # -> nanomaggies
         img *= zpscale
         # the invvar is *already* in nanomaggies units.
+
+        if sky != 0:
+            print 'Subtracting off coadd sky level of', sky
+            img -= sky
+
+        # WCS for the sub-image...
+        h,w = img.shape
+        wcs = wcs.get_subimage(x0, y0, w, h)
         
         twcs = ConstantFitsWcs(wcs)
         sky = 0.
@@ -948,7 +962,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
         if opt.l1b:
             tims = _unwise_l1b_tractor_images(thisdir, '.', tile.coadd_id,
-                                              band, wanyband, opt.psffn)
+                                              band, wanyband, opt.psffn, opt.l1b_sky)
             tim = tims[0]
         else:
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
@@ -1132,6 +1146,37 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         print 'Creating a Tractor with images', [t.shape for t in tims], 'and', len(subcat), 'sources'
         tractor = Tractor(tims, subcat)
 
+        #### TEST
+        if ps and opt.l1b:
+            # Coadd data and models.
+            codat = np.zeros((H,W), np.float32)
+            coiv  = np.zeros((H,W), np.float32)
+            for tim in tims:
+                dat = tim.getImage()
+                ie  = tim.getInvError()
+                try:
+                    Yo,Xo,Yi,Xi,nil = resample_with_wcs(wcs, tim.wcs.wcs, [],3)
+                except:
+                    continue
+                if len(Yo) == 0:
+                    continue
+                iv = ie[Yi,Xi]**2
+                codat[Yo,Xo] += dat[Yi,Xi] * iv
+                coiv [Yo,Xo] += iv
+            codat /= coiv
+            codat[coiv == 0] = 0.
+            dat = codat
+
+            plt.clf()
+            plt.imshow(dat, interpolation='nearest', origin='lower',
+                       cmap='gray', vmin=-3*sig1, vmax=10*sig1)
+            plt.colorbar()
+            plt.title('Coadded data')
+            ps.savefig()
+
+
+
+
         print 'Running forced photometry...'
         t0 = Time()
         tractor.freezeParamsRecursive('*')
@@ -1199,8 +1244,37 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         if ps:
             tag = '%s W%i' % (tile.coadd_id, band)
 
+        if ps and not opt.l1b:
             (dat,mod,ie,chi,roi) = ims1[0]
+        if ps and opt.l1b:
+            # Coadd data and models.
+            codat = np.zeros((H,W), np.float32)
+            coiv  = np.zeros((H,W), np.float32)
+            comod = np.zeros((H,W), np.float32)
 
+            assert(len(tims) == len(ims1))
+
+            for tim,(dat,mod,ie,chi,roi) in zip(tims, ims1):
+                try:
+                    Yo,Xo,Yi,Xi,nil = resample_with_wcs(wcs, tim.wcs.wcs, [],3)
+                except:
+                    continue
+                if len(Yo) == 0:
+                    continue
+                iv = ie[Yi,Xi]**2
+                codat[Yo,Xo] += dat[Yi,Xi] * iv
+                coiv [Yo,Xo] += iv
+                comod[Yo,Xo] += mod[Yi,Xi] * iv
+
+            codat /= coiv
+            comod /= coiv
+            codat[coiv == 0] = 0.
+            comod[coiv == 0] = 0.
+            dat = codat
+            mod = comod
+            chi = (codat - comod) * np.sqrt(coiv)
+
+        if ps:
             plt.clf()
             plt.imshow(dat, interpolation='nearest', origin='lower',
                        cmap='gray', vmin=-3*sig1, vmax=10*sig1)
@@ -1957,6 +2031,8 @@ def main():
     parser.add_option('--no-threads', action='store_true')
 
     parser.add_option('--l1b', action='store_true', help='Use individual exposures (L1b images), not coadds')
+    parser.add_option('--l1b-sky', action='store_true', default=False,
+                      help='Subtract coadd sky level from l1b frames?')
     
     opt,args = parser.parse_args()
 
