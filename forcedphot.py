@@ -79,14 +79,14 @@ DATASET-atlas.fits
   the coadd tiles to process
 
 (--tiledir)
-tiledir ("wise-coadds")/xxx/xxxx[pm]xxx/unwise-xxxx[pm]xxx-wW-img-m.fits
+tiledir ("unwise-coadds")/xxx/xxxx[pm]xxx/unwise-xxxx[pm]xxx-wW-img-m.fits
                              and {invvar,std,n}-m.fits
   WISE coadd tiles
 
-(--photoobjsdir) photoobjdir: photoObjs-new/301/R/C/...
+(--photoobjsdir) photoobjdir: photoObjs/301/R/C/...
   SDSS photoObj files
 
-(--resolvedir) ("photoResolve-new")/window_flist.fits
+(--resolvedir) ("photoResolve")/window_flist.fits
   SDSS list of  files
 
 (--tempdir) tempoutdir: ("DATASET-phot-temp")/photoobjs-TILE.fits
@@ -592,7 +592,7 @@ def _get_photoobjs(tile, wcs, bandnum, existOnly):
 
 
 def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
-                               psffn):
+                               psffn, l1bsky):
     from unwise_coadd import walk_wcs_boundary, zeropointToScale
 
     # All this is required to get the L1b image extents
@@ -605,6 +605,12 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
     r,d = walk_wcs_boundary(cowcs, step=W, margin=0)
     ok,u,v = cowcs.radec2iwc(r,d)
     copoly = np.array(list(reversed(zip(u,v))))
+
+    cosky = 0.
+    if l1bsky:
+        hdr = fitsio.read_header(coimfn)
+        cosky = hdr['UNW_SKY']
+        print 'Read sky value of', cosky, 'from coadd header'
 
     print 'Reading PSF from', psffn
     P = fits_table(psffn, hdu=band)
@@ -716,7 +722,31 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                           'unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
                           (coadd_id, f.scan_id, f.frame_num, band))
         print 'Looking for unWISE mask', fn
-        umask = fitsio.FITS(fn)[0][slc]
+        if os.path.exists(fn):
+            umask = fitsio.FITS(fn)[0][slc]
+        else:
+            tgzfn = os.path.join(unwdir, 
+                                 'unwise-%s-w%i-mask.tgz' % (coadd_id, band))
+            print 'Looking for tgz', tgzfn
+            maskdir = 'unwise-%s-w%i-mask' % (coadd_id, band)
+            maskfn = maskdir + ('/unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
+                                (coadd_id, f.scan_id, f.frame_num, band))
+            # extract in temp dir
+            import tempfile
+            tempdir = tempfile.mkdtemp()
+            cmd = 'tar xf %s -C %s %s' % (tgzfn, tempdir, maskfn)
+            print cmd
+            from astrometry.util.run_command import run_command
+            rtn,txt,err = run_command(cmd)
+            if rtn:
+                raise RuntimeError('Failed to untar mask file')
+            print txt
+            umask = fitsio.FITS(os.path.join(tempdir, maskfn))[0][slc]
+
+            os.unlink(os.path.join(tempdir, maskfn))
+            os.rmdir(os.path.join(tempdir, maskdir))
+            os.rmdir(tempdir)
+
         n0 = np.sum(invvar > 0)
         invvar[umask > 0] = 0.
         print 'Masked', n0 - np.sum(invvar > 0), 'pixels from unWISE'
@@ -729,6 +759,14 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         # -> nanomaggies
         img *= zpscale
         # the invvar is *already* in nanomaggies units.
+
+        if cosky != 0:
+            print 'Subtracting off coadd sky level of', cosky
+            img -= cosky
+
+        # WCS for the sub-image...
+        h,w = img.shape
+        wcs = wcs.get_subimage(x0, y0, w, h)
         
         twcs = ConstantFitsWcs(wcs)
         sky = 0.
@@ -937,7 +975,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
         if opt.l1b:
             tims = _unwise_l1b_tractor_images(thisdir, '.', tile.coadd_id,
-                                              band, wanyband, opt.psffn)
+                                              band, wanyband, opt.psffn, opt.l1b_sky)
             tim = tims[0]
         else:
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
@@ -1023,7 +1061,9 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             set_bright_psf_mods(cat, WISE, T, opt.bright1, band, tile, wcs, sourcerad)
 
         flux_invvars = np.zeros(len(cat))
-        fskeys = ['prochi2', 'pronpix', 'profracflux', 'proflux', 'npix', 'pronexp']
+        fskeys = ['prochi2', 'pronpix', 'profracflux', 'proflux', 'npix']
+        if not opt.l1b:
+            fskeys.append('pronexp')
         fitstats = dict([(k, np.zeros(len(cat))) for k in fskeys])
 
         if ps:
@@ -1123,7 +1163,37 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         print 'Sources:', len(srci), 'in the box,', len(I)-len(srci), 'in the margins, and', len(J), 'WISE-only'
         print 'Creating a Tractor with images', [t.shape for t in tims], 'and', len(subcat), 'sources'
         tractor = Tractor(tims, subcat)
-        tractor.disable_cache()
+
+        #### TEST
+        if ps and opt.l1b:
+            # Coadd data and models.
+            codat = np.zeros((H,W), np.float32)
+            coiv  = np.zeros((H,W), np.float32)
+            for tim in tims:
+                dat = tim.getImage()
+                ie  = tim.getInvError()
+                try:
+                    Yo,Xo,Yi,Xi,nil = resample_with_wcs(wcs, tim.wcs.wcs, [],3)
+                except:
+                    continue
+                if len(Yo) == 0:
+                    continue
+                iv = ie[Yi,Xi]**2
+                codat[Yo,Xo] += dat[Yi,Xi] * iv
+                coiv [Yo,Xo] += iv
+            codat /= coiv
+            codat[coiv == 0] = 0.
+            dat = codat
+
+            plt.clf()
+            plt.imshow(dat, interpolation='nearest', origin='lower',
+                       cmap='gray', vmin=-3*sig1, vmax=10*sig1)
+            plt.colorbar()
+            plt.title('Coadded data')
+            ps.savefig()
+
+
+
 
         print 'Running forced photometry...'
         t0 = Time()
@@ -1143,11 +1213,15 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         if not opt.l1b:
             kwa.update(fitstat_extras=[('pronexp', [tim.nims])])
 
+        if opt.ceres:
+            from tractor.ceres_optimizer import CeresOptimizer
+            tractor.optimizer = CeresOptimizer(BW=opt.ceresblock,
+                                               BH=opt.ceresblock)
+
         R = tractor.optimize_forced_photometry(
             minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
             fitstats=True, 
             variance=True, shared_params=False,
-            use_ceres=opt.ceres, BW=opt.ceresblock, BH=opt.ceresblock,
             wantims=wantims, negfluxval=0.1*sig1, **kwa)
         print 'That took', Time()-t0
 
@@ -1179,15 +1253,46 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             (dat,mod,ie,chi,roi) = ims1[0]
 
             tag = 'fit-%s-w%i' % (tile.coadd_id, band)
-            fitsio.write('%s-data.fits' % tag, dat, clobber=True)
-            fitsio.write('%s-mod.fits' % tag,  mod, clobber=True)
-            fitsio.write('%s-chi.fits' % tag,  chi, clobber=True)
+            pat = os.path.join(opt.outdir, '%s-%%s.fits' % tag)
+            for name,data in [('data',dat),('mod',mod),('chi',chi)]:
+                fn = pat % name
+                fitsio.write(fn, data, clobber=True)
+                print 'Wrote', fn
 
         if ps:
             tag = '%s W%i' % (tile.coadd_id, band)
 
+        if ps and not opt.l1b:
             (dat,mod,ie,chi,roi) = ims1[0]
+        if ps and opt.l1b:
+            # Coadd data and models.
+            codat = np.zeros((H,W), np.float32)
+            coiv  = np.zeros((H,W), np.float32)
+            comod = np.zeros((H,W), np.float32)
 
+            assert(len(tims) == len(ims1))
+
+            for tim,(dat,mod,ie,chi,roi) in zip(tims, ims1):
+                try:
+                    Yo,Xo,Yi,Xi,nil = resample_with_wcs(wcs, tim.wcs.wcs, [],3)
+                except:
+                    continue
+                if len(Yo) == 0:
+                    continue
+                iv = ie[Yi,Xi]**2
+                codat[Yo,Xo] += dat[Yi,Xi] * iv
+                coiv [Yo,Xo] += iv
+                comod[Yo,Xo] += mod[Yi,Xi] * iv
+
+            codat /= coiv
+            comod /= coiv
+            codat[coiv == 0] = 0.
+            comod[coiv == 0] = 0.
+            dat = codat
+            mod = comod
+            chi = (codat - comod) * np.sqrt(coiv)
+
+        if ps:
             plt.clf()
             plt.imshow(dat, interpolation='nearest', origin='lower',
                        cmap='gray', vmin=-3*sig1, vmax=10*sig1)
@@ -1848,6 +1953,14 @@ def main():
     global photoobjdir
     global resolvedir
 
+    import datetime
+    import sys
+    import os
+    print 'forcedphot.py starting at', datetime.datetime.now().isoformat()
+    print 'command-line args:', sys.argv
+    print 'git describe:'
+    os.system('git describe')
+
     parser = optparse.OptionParser('%prog [options]')
     parser.add_option('--minsig1', dest='minsig1', default=0.1, type=float)
     parser.add_option('--minsig2', dest='minsig2', default=0.1, type=float)
@@ -1873,9 +1986,9 @@ def main():
                       help='Ensure WISE file exists and then quit?')
 
     parser.add_option('--photoobjsdir', help='Set photoObj input directory',
-                      default='photoObjs-new')
+                      default='photoObjs')
     parser.add_option('--resolvedir', help='Set resolve input directory',
-                      default='photoResolve-new')
+                      default='photoResolve')
 
     parser.add_option('-p', dest='pickle', default=False, action='store_true',
                       help='Save .pickle file for debugging purposes')
@@ -1936,6 +2049,8 @@ def main():
     parser.add_option('--no-threads', action='store_true')
 
     parser.add_option('--l1b', action='store_true', help='Use individual exposures (L1b images), not coadds')
+    parser.add_option('--l1b-sky', action='store_true', default=False,
+                      help='Subtract coadd sky level from l1b frames?')
     
     opt,args = parser.parse_args()
 
@@ -1971,24 +2086,32 @@ def main():
     print 'Reading', fn
     T = fits_table(fn)
 
-    version = get_svn_version()
-    print 'SVN version info:', version
+    version = {}
+    from astrometry.util.run_command import run_command
+    for key,cmd in [('Revision', 'git describe'),
+                    ('URL', 'git config --get remote.origin.url'),
+                    ]:
+        rtn,txt,err = run_command(cmd)
+        if rtn:
+            raise RuntimeError('Failed to get version string (%s):' % cmd + txt + err)
+        txt = txt.strip()
+        version[key] = txt
 
     hdr = fitsio.FITSHDR()
-    hdr.add_record(dict(name='SEQ_VER', value=version['Revision'],
-                        comment='SVN revision'))
-    hdr.add_record(dict(name='SEQ_URL', value=version['URL'], comment='SVN URL'))
-    hdr.add_record(dict(name='SEQ_DATE', value=datetime.datetime.now().isoformat(),
+    hdr.add_record(dict(name='WPHO_VER', value=version['Revision'],
+                        comment='Git describe'))
+    hdr.add_record(dict(name='WPHO_URL', value=version['URL'], comment='Git URL'))
+    hdr.add_record(dict(name='WPHO_DATE', value=datetime.datetime.now().isoformat(),
                         comment='forced phot run time'))
-    hdr.add_record(dict(name='SEQ_SKY', value=opt.sky, comment='fit sky?'))
+    hdr.add_record(dict(name='WPHO_SKY', value=opt.sky, comment='fit sky?'))
     for band in opt.bands:
         minsig = getattr(opt, 'minsig%i' % band)
-        hdr.add_record(dict(name='SEQ_MNS%i' % band, value=minsig,
+        hdr.add_record(dict(name='WPHO_MNS%i' % band, value=minsig,
                             comment='min surf brightness in sig, band %i' % band))
-    hdr.add_record(dict(name='SEQ_CERE', value=opt.ceres, comment='use Ceres?'))
-    hdr.add_record(dict(name='SEQ_ERRF', value=opt.errfrac, comment='error flux fraction'))
+    hdr.add_record(dict(name='WPHO_CERE', value=opt.ceres, comment='use Ceres?'))
+    hdr.add_record(dict(name='WPHO_ERRF', value=opt.errfrac, comment='error flux fraction'))
     if opt.ceres:
-        hdr.add_record(dict(name='SEQ_CEBL', value=opt.ceresblock,
+        hdr.add_record(dict(name='WPHO_CEBL', value=opt.ceresblock,
                         comment='Ceres blocksize'))
     
     if opt.plotbase is None:
@@ -2044,7 +2167,6 @@ def main():
             except:
                 pass
 
-    # don't need this
     disable_galaxy_cache()
 
     tiles = []
