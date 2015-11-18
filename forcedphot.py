@@ -12,6 +12,19 @@ import fitsio
 
 
 '''
+Running this code at NERSC.
+
+You need to set up some symlinks and copy some files to the cwd.
+
+
+'''
+
+
+
+
+'''
+Dustin's notes about the "400 million" paper.
+
 Reviewer's questions:
 
 python forcedphot.py --dataset sdss-dr10d 1578 --band 1 -d vanilla
@@ -930,7 +943,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
                                         opt.psffn)
             tims = [tim]
-            
+
         # Surface-brightness approximation
         minsig = getattr(opt, 'minsig%i' % band)
         sig1 = tim.sig1
@@ -1015,16 +1028,21 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
         if ps:
             tag = '%s W%i' % (tile.coadd_id, band)
-            img = tim.getImage()
-            sky = tim.getSky().getValue()
             plt.clf()
-            n,b,p = plt.hist(img.ravel(), bins=100,
-                             range=(-10*sig1, 20*sig1), log=True,
-                             histtype='step', color='b')
-            mx = max(n)
-            plt.ylim(0.1, mx)
-            plt.xlim(-10*sig1, 20*sig1)
-            plt.axvline(sky, color='r')
+            mx = 0
+            for tim in tims:
+                img = tim.getImage()
+                ie = tim.inverr
+                nsig = img[ie > 0] / tim.sig1
+                # nsig = img * ie
+                n,b,p = plt.hist(nsig.ravel(), bins=100, range=(-10, 10),
+                                 log=True, histtype='step', color='b')
+                mx = max(mx, max(n))
+                sky = tim.getSky().getValue()
+                plt.axvline(sky, color='r')
+            plt.ylim(0.1, 1.1*mx)
+            plt.xlim(-10., 10.)
+            plt.xlabel('Pixel sigmas')
             plt.title('%s: Pixel histogram' % tag)
             ps.savefig()
 
