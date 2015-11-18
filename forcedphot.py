@@ -592,7 +592,7 @@ def _get_photoobjs(tile, wcs, bandnum, existOnly):
 
 
 def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
-                               psffn, l1bsky):
+                               psffn, l1bsky, l1bskyest):
     from unwise_coadd import walk_wcs_boundary, zeropointToScale
 
     # All this is required to get the L1b image extents
@@ -680,7 +680,7 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
 
         print 'Read', img.shape, img.dtype, 'image'
         print 'Image median', np.median(img), 'vs sky', f.sky1
-        
+
         iv = f.weight
         zp = f.zeropoint
         zpscale = 1. / zeropointToScale(zp)
@@ -723,27 +723,32 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                           (coadd_id, f.scan_id, f.frame_num, band))
         print 'Looking for unWISE mask', fn
         if os.path.exists(fn):
+            #fullumask = fitsio.read(fn)
+            #umask = fullumask[slc]
             umask = fitsio.FITS(fn)[0][slc]
         else:
             tgzfn = os.path.join(unwdir, 
                                  'unwise-%s-w%i-mask.tgz' % (coadd_id, band))
             print 'Looking for tgz', tgzfn
             maskdir = 'unwise-%s-w%i-mask' % (coadd_id, band)
-            maskfn = maskdir + ('/unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
-                                (coadd_id, f.scan_id, f.frame_num, band))
+            umaskfn = maskdir + ('/unwise-mask-%s-%s%03i-w%i-1b.fits.gz' %
+                                 (coadd_id, f.scan_id, f.frame_num, band))
             # extract in temp dir
             import tempfile
             tempdir = tempfile.mkdtemp()
-            cmd = 'tar xf %s -C %s %s' % (tgzfn, tempdir, maskfn)
+            cmd = 'tar xf %s -C %s %s' % (tgzfn, tempdir, umaskfn)
             print cmd
             from astrometry.util.run_command import run_command
             rtn,txt,err = run_command(cmd)
             if rtn:
                 raise RuntimeError('Failed to untar mask file')
             print txt
-            umask = fitsio.FITS(os.path.join(tempdir, maskfn))[0][slc]
+            fn = os.path.join(tempdir, umaskfn)
+            #fullumask = fitsio.read(fn)
+            #umask = fullmask[slc]
+            umask = fitsio.FITS(fn)[0][slc]
 
-            os.unlink(os.path.join(tempdir, maskfn))
+            os.unlink(os.path.join(tempdir, umaskfn))
             os.rmdir(os.path.join(tempdir, maskdir))
             os.rmdir(tempdir)
 
@@ -751,11 +756,25 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         invvar[umask > 0] = 0.
         print 'Masked', n0 - np.sum(invvar > 0), 'pixels from unWISE'
 
-        img[invvar == 0] = 0
-        assert(np.all(np.isfinite(img)))
-        assert(np.all(np.isfinite(invvar)))
-        
-        img -= (f.sky1 + f.sky2)
+        if l1bskyest:
+            fullimg  = fitsio.read(intfn)
+            fullmask = fitsio.read(maskfn)
+            # add some noise to smooth out "dynacal" artifacts
+            fullok = ((fullmask & maskbits) == 0)
+            fim = fullimg[fullok]
+            del fullimg, fullmask
+            sig1 = 1./np.sqrt(iv) / zpscale
+            fim += np.random.normal(scale=sig1, size=fim.shape) 
+            sky = estimate_mode(fim)
+
+            pct = np.percentile(fim, [16,50,84])
+            print 'fim 16,50,84th pctiles:', pct
+            print 'sig1', sig1, 'vs', pct[1]-pct[0], pct[2]-pct[1]
+            print 'sky', sky
+            img -= sky
+        else:
+            img -= (f.sky1 + f.sky2)
+
         # -> nanomaggies
         img *= zpscale
         # the invvar is *already* in nanomaggies units.
@@ -763,6 +782,10 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         if cosky != 0:
             print 'Subtracting off coadd sky level of', cosky
             img -= cosky
+
+        img[invvar == 0] = 0
+        assert(np.all(np.isfinite(img)))
+        assert(np.all(np.isfinite(invvar)))
 
         # WCS for the sub-image...
         h,w = img.shape
@@ -975,7 +998,8 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
         if opt.l1b:
             tims = _unwise_l1b_tractor_images(thisdir, '.', tile.coadd_id,
-                                              band, wanyband, opt.psffn, opt.l1b_sky)
+                                              band, wanyband, opt.psffn, opt.l1b_sky,
+                                              opt.l1b_sky_est)
             tim = tims[0]
         else:
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
@@ -1070,18 +1094,37 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             tag = '%s W%i' % (tile.coadd_id, band)
             plt.clf()
             mx = 0
+            #nb = []
             for tim in tims:
                 img = tim.getImage()
                 ie = tim.inverr
                 nsig = img[ie > 0] / tim.sig1
                 # nsig = img * ie
-                n,b,p = plt.hist(nsig.ravel(), bins=100, range=(-10, 10),
-                                 log=True, histtype='step', color='b')
+                n,b,p = plt.hist(nsig.ravel(), bins=50, range=(-10, 10),
+                                 log=True, histtype='step', color='b', alpha=0.1)
+                #nb.append((n,b))
                 mx = max(mx, max(n))
                 sky = tim.getSky().getValue()
                 plt.axvline(sky, color='r')
             plt.ylim(0.1, 1.1*mx)
             plt.xlim(-10., 10.)
+            plt.xlabel('Pixel sigmas')
+            plt.title('%s: Pixel histogram' % tag)
+            ps.savefig()
+
+            plt.clf()
+            mx = 0
+            for tim in tims:
+                img = tim.getImage()
+                ie = tim.inverr
+                nsig = img[ie > 0] / tim.sig1
+                n,b,p = plt.hist(nsig.ravel(), bins=80, range=(-4, 4),
+                                 histtype='step', color='b', alpha=0.1)
+                mx = max(mx, max(n))
+                #for n,b in nb:
+                #plt.plot(b[:-1] + 0.5 * (b[1]-b[0]), n, 'b-', alpha=0.1)
+            plt.ylim(0, 1.1*mx)
+            plt.xlim(-4., 4.)
             plt.xlabel('Pixel sigmas')
             plt.title('%s: Pixel histogram' % tag)
             ps.savefig()
@@ -1165,7 +1208,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         tractor = Tractor(tims, subcat)
 
         #### TEST
-        if ps and opt.l1b:
+        if opt.l1b and (ps or opt.l1b_sky_est):
             # Coadd data and models.
             codat = np.zeros((H,W), np.float32)
             coiv  = np.zeros((H,W), np.float32)
@@ -1185,14 +1228,33 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             codat[coiv == 0] = 0.
             dat = codat
 
-            plt.clf()
-            plt.imshow(dat, interpolation='nearest', origin='lower',
-                       cmap='gray', vmin=-3*sig1, vmax=10*sig1)
-            plt.colorbar()
-            plt.title('Coadded data')
-            ps.savefig()
+            if opt.l1b_sky_est:
+                cosky = estimate_mode(codat)
+                print 'Estimated coadd sky:', cosky
 
+                print 'Subtracting sky estimate from tims...'
+                for tim in tims:
+                    tim.data -= cosky
+                codat -= cosky
 
+            if ps:
+                plt.clf()
+                plt.imshow(dat, interpolation='nearest', origin='lower',
+                           cmap='gray', vmin=-3*sig1, vmax=10*sig1)
+                plt.colorbar()
+                plt.title('Coadded data')
+                ps.savefig()
+            
+                nsig = codat[coiv > 0] * np.sqrt(coiv[coiv > 0])
+                plt.clf()
+                n,b,p = plt.hist(nsig.ravel(), bins=100, range=(-10, 10),
+                                 log=True, histtype='step', color='b')
+                plt.xlabel('Coadd pixel values (sigmas)')
+                mx = max(n)
+                plt.ylim(0.1, 1.1*mx)
+                plt.xlim(-10., 10.)
+                plt.axvline(0., color='r', alpha=0.2)
+                ps.savefig()
 
 
         print 'Running forced photometry...'
@@ -1348,6 +1410,13 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             # fn = ps.basefn + '-chi.fits'
             # fitsio.write(fn, chi, clobber=True)
             # print 'Wrote', fn
+
+            plt.clf()
+            loghist(dat.ravel(), mod.ravel(), range=((-3,10),(-3,10)))
+            plt.xlabel('Coadded data pixel values')
+            plt.ylabel('Coadded model pixel values')
+            plt.title('Pixel-by-pixel comparisons')
+            ps.savefig()
 
         if savepickle:
             if ims1 is None:
@@ -2051,6 +2120,10 @@ def main():
     parser.add_option('--l1b', action='store_true', help='Use individual exposures (L1b images), not coadds')
     parser.add_option('--l1b-sky', action='store_true', default=False,
                       help='Subtract coadd sky level from l1b frames?')
+
+    parser.add_option('--l1b-sky-est', action='store_true', default=False,
+                      help='Re-estimate and subtract sky level from l1b frames and coadd?')
+
     
     opt,args = parser.parse_args()
 
