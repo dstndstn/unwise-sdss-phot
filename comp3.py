@@ -2922,16 +2922,8 @@ def mstars(T, tdir, pdir):
 
 def psfcutoff():
     ps = PlotSequence('cut')
-    
+
     tile = '1800p000'
-
-    T1 = fits_table('vanilla/phot-%s.fits' % tile)
-    T2 = fits_table('l1b/phot-%s.fits' % tile)
-    print len(T1), len(T2), 'sources'
-
-    plt.clf()
-    plt.loglog(T1.w1_nanomaggies, T2.w1_nanomaggies, 'b.', alpha=0.1)
-    ps.savefig()
     
     plt.clf()
     #plt.loglog(T1.w1_nanomaggies, T2.w1_nanomaggies, 'b.', alpha=0.1)
@@ -3156,6 +3148,58 @@ def coadd_demo():
         
 def main():
 
+    ps = PlotSequence('l1b')
+
+    tile = '1384p106'
+
+    T1 = fits_table('vanilla2/phot-%s.fits' % tile)
+    T2 = fits_table('l1b-sky/phot-%s.fits' % tile)
+    print len(T1), len(T2), 'sources'
+
+    mn = 1e-2
+    plt.clf()
+    plt.loglog(np.maximum(mn, T1.w1_nanomaggies),
+               np.maximum(mn, T2.w1_nanomaggies), 'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('L1b flux (nmgy)')
+    ps.savefig()
+
+    plt.clf()
+    plt.loglog(T1.w1_nanomaggies,
+               T2.w1_nanomaggies / T1.w1_nanomaggies,
+               'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('L1b flux / Coadd flux')
+    plt.ylim(0.1, 10.)
+    plt.xlim(mn, T1.w1_nanomaggies.max())
+    ps.savefig()
+
+    plt.clf()
+    plt.semilogx(
+        T1.w1_nanomaggies,
+        np.clip((T2.w1_nanomaggies - T1.w1_nanomaggies) *
+                np.sqrt(T2.w1_nanomaggies_ivar + T1.w1_nanomaggies_ivar),
+                -10,10),
+        'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('(L1b flux - Coadd flux) / Error')
+    plt.ylim(-10, 10)
+    ps.savefig()
+
+    plt.clf()
+    n,b,p = plt.hist(np.clip((T2.w1_nanomaggies - T1.w1_nanomaggies) *
+                             np.sqrt(T2.w1_nanomaggies_ivar + T1.w1_nanomaggies_ivar),
+                             -10,10),
+                    range=(-10,10), bins=100, histtype='step', color='b')
+    xx = np.linspace(-10,10,500)
+    db = b[1]-b[0]
+    plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*len(T1))
+    plt.xlabel('(L1b flux - Coadd flux) / Error')
+    ps.savefig()
+    
+    sys.exit(0)
+
+    
     dataset = 'sdss-dr10d'
     pdir = '%s-phot' % dataset
     tdir = '%s-phot-temp' % dataset
@@ -3168,7 +3212,6 @@ def main():
 
     coadd_demo()
 
-    sys.exit(0)
 
     # python -c "from astrometry.util.fits import *; T=fits_table('allsky-atlas.fits'); T.cut(T.dec > -27); T.cut(np.lexsort((T.ra, T.dec))); T.writeto('north-atlas.fits')"
 
