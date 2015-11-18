@@ -3174,28 +3174,39 @@ def main():
     plt.xlim(mn, T1.w1_nanomaggies.max())
     ps.savefig()
 
+    chi = ((T2.w1_nanomaggies - T1.w1_nanomaggies) /
+           np.sqrt(1./T1.w1_nanomaggies_ivar + 1./T2.w1_nanomaggies_ivar))
+    
     plt.clf()
-    plt.semilogx(
-        T1.w1_nanomaggies,
-        np.clip((T2.w1_nanomaggies - T1.w1_nanomaggies) *
-                np.sqrt(T2.w1_nanomaggies_ivar + T1.w1_nanomaggies_ivar),
-                -10,10),
-        'b.', alpha=0.1)
+    plt.semilogx(T1.w1_nanomaggies, np.clip(chi,-10,10),
+                 'b.', alpha=0.1)
     plt.xlabel('Coadd flux (nmgy)')
     plt.ylabel('(L1b flux - Coadd flux) / Error')
     plt.ylim(-10, 10)
     ps.savefig()
 
     plt.clf()
-    n,b,p = plt.hist(np.clip((T2.w1_nanomaggies - T1.w1_nanomaggies) *
-                             np.sqrt(T2.w1_nanomaggies_ivar + T1.w1_nanomaggies_ivar),
-                             -10,10),
-                    range=(-10,10), bins=100, histtype='step', color='b')
+    n,b,p = plt.hist(np.clip(chi, -10,10), range=(-10,10), bins=100, histtype='step', color='b')
     xx = np.linspace(-10,10,500)
     db = b[1]-b[0]
     plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*len(T1))
     plt.xlabel('(L1b flux - Coadd flux) / Error')
     ps.savefig()
+
+    mags = np.arange(25, 11, -1)
+    for mhi,mlo in zip(mags, mags[1:]):
+        I = np.flatnonzero((T1.w1_mag >= mlo) * (T1.w1_mag < mhi))
+        plt.clf()
+        n,b,p = plt.hist(np.clip(chi[I], -10,10),
+                         range=(-10,10), bins=100, histtype='step', color='b')
+        xx = np.linspace(-10,10,500)
+        db = b[1]-b[0]
+        plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*sum(n))
+        plt.xlabel('(L1b flux - Coadd flux) / Error')
+        plt.title('W1 mag %g to %g' % (mlo,mhi))
+        ps.savefig()
+        
+
     
     sys.exit(0)
 
