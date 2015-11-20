@@ -592,7 +592,7 @@ def _get_photoobjs(tile, wcs, bandnum, existOnly):
 
 
 def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
-                               psffn, l1bsky, l1bskyest):
+                               psffn, l1bsky, l1bskyest, use_unc=False):
     from unwise_coadd import walk_wcs_boundary, zeropointToScale
 
     # All this is required to get the L1b image extents
@@ -675,8 +675,9 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         slc = (slice(y0, y1), slice(x0, x1))
 
         img = fitsio.FITS(intfn)[0][slc]
-        #unc = fitsio.FITS(uncfn)[0][slc]
         mask = fitsio.FITS(maskfn)[0][slc]
+        if use_unc:
+            unc = fitsio.FITS(uncfn)[0][slc]
 
         print 'Read', img.shape, img.dtype, 'image'
         print 'Image median', np.median(img), 'vs sky', f.sky1
@@ -699,13 +700,18 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
 
         maskbits = sum([1<<bit for bit in badbits])
         goodmask = ((mask & maskbits) == 0)
-        #goodmask[unc == 0] = False
         goodmask[np.logical_not(np.isfinite(img))] = False
-        #goodmask[np.logical_not(np.isfinite(unc))] = False
 
-        invvar = np.zeros_like(img)
-        invvar[goodmask] = iv
+        if use_unc:
+            goodmask[unc == 0] = False
+            goodmask[np.logical_not(np.isfinite(unc))] = False
 
+            inverr = 1. / unc
+            inverr[np.logical_not(goodmask)] = 0.
+        else:
+            inverr = np.zeros_like(img)
+            inverr[goodmask] = np.sqrt(iv)
+        
         # also mask out regions outside the coadd frame.
         #print 'Clipped polygon:', cpoly
         xx,yy = np.meshgrid(np.arange(x0, x1), np.arange(y0, y1))
@@ -714,7 +720,7 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         inside = point_in_poly(u, v, cpoly)
         print np.sum(inside), 'of', xx.size, 'pixels are inside coadd bounds'
         #print 'inside:', inside.shape
-        invvar[np.logical_not(inside)] = 0.
+        inverr[np.logical_not(inside)] = 0.
 
         # Add unWISE mask
         fn = os.path.join(unwdir, 
@@ -752,9 +758,9 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
             os.rmdir(os.path.join(tempdir, maskdir))
             os.rmdir(tempdir)
 
-        n0 = np.sum(invvar > 0)
-        invvar[umask > 0] = 0.
-        print 'Masked', n0 - np.sum(invvar > 0), 'pixels from unWISE'
+        n0 = np.sum(inverr > 0)
+        inverr[umask > 0] = 0.
+        print 'Masked', n0 - np.sum(inverr > 0), 'pixels from unWISE'
 
         if l1bskyest:
             fullimg  = fitsio.read(intfn)
@@ -777,15 +783,20 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
 
         # -> nanomaggies
         img *= zpscale
-        # the invvar is *already* in nanomaggies units.
 
+        if use_unc:
+            inverr /= zpscale
+        else:
+            # 'iv' was *already* in nanomaggies units.
+            pass
+            
         if cosky != 0:
             print 'Subtracting off coadd sky level of', cosky
             img -= cosky
 
-        img[invvar == 0] = 0
+        img[inverr == 0] = 0
         assert(np.all(np.isfinite(img)))
-        assert(np.all(np.isfinite(invvar)))
+        assert(np.all(np.isfinite(inverr)))
 
         # WCS for the sub-image...
         h,w = img.shape
@@ -795,7 +806,7 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         sky = 0.
         tsky = ConstantSky(sky)
 
-        tim = Image(data=img, invvar=invvar, psf=psf, wcs=twcs,
+        tim = Image(data=img, inverr=inverr, psf=psf, wcs=twcs,
                     sky=tsky, photocal=LinearPhotoCal(1., band=bandname),
                     name='WISE L1b %s-%i W%i' % (f.scan_id, f.frame_num, band))
         tim.sig1 = np.sqrt(1./iv)

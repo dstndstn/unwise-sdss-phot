@@ -3152,10 +3152,32 @@ def main():
 
     tile = '1384p106'
 
-    T1 = fits_table('vanilla2/phot-%s.fits' % tile)
-    T2 = fits_table('l1b-sky/phot-%s.fits' % tile)
+    #T1 = fits_table('vanilla2/phot-%s.fits' % tile)
+    #T2 = fits_table('l1b-sky/phot-%s.fits' % tile)
+    T1 = fits_table('vanilla3/phot-%s.fits' % tile)
+    T2 = fits_table('l1b-3/phot-%s.fits' % tile)
     print len(T1), len(T2), 'sources'
 
+    l1bco = fitsio.read('l1b-3/coadd-l1b-1384p106-w1-img.fits')
+    coadd = fitsio.read('unwise-coadds//138/1384p106/unwise-1384p106-w1-img-m.fits')
+    plt.clf()
+    kwa = dict(vmin=-10, vmax=60, ticks=False)
+    dimshow(l1bco, **kwa)
+    plt.title('L1b coadd')
+    ps.savefig()
+
+    plt.clf()
+    kwa = dict(vmin=-10, vmax=60, ticks=False)
+    dimshow(coadd, **kwa)
+    plt.title('unWISE coadd')
+    ps.savefig()
+
+    plt.clf()
+    dimshow(l1bco - coadd, vmin=-10, vmax=10, ticks=False)
+    plt.title('Coadd diff')
+    ps.savefig()
+
+    
     mn = 1e-2
     plt.clf()
     plt.loglog(np.maximum(mn, T1.w1_nanomaggies),
