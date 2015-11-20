@@ -3155,7 +3155,8 @@ def main():
     #T1 = fits_table('vanilla2/phot-%s.fits' % tile)
     #T2 = fits_table('l1b-sky/phot-%s.fits' % tile)
     T1 = fits_table('vanilla3/phot-%s.fits' % tile)
-    T2 = fits_table('l1b-3/phot-%s.fits' % tile)
+    #T2 = fits_table('l1b-3/phot-%s.fits' % tile)
+    T2 = fits_table('l1b-4/phot-%s.fits' % tile)
     print len(T1), len(T2), 'sources'
 
     l1bco = fitsio.read('l1b-3/coadd-l1b-1384p106-w1-img.fits')

@@ -1236,7 +1236,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             dat = codat
 
             if opt.l1b_sky_est:
-                cosky = estimate_mode(codat)
+                cosky = estimate_mode(codat[coiv > 0])
                 print 'Estimated coadd sky:', cosky
 
                 print 'Subtracting sky estimate from tims...'
@@ -1287,6 +1287,98 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             tractor.optimizer = CeresOptimizer(BW=opt.ceresblock,
                                                BH=opt.ceresblock)
 
+        if opt.l1b:
+            # Try creating a coadd and photometering that, just for kicks.
+            p0 = tractor.getParams()
+
+            coimg = np.zeros((H,W), np.float32)
+            cow   = np.zeros((H,W), np.float32)
+            for tim in tims:
+                img = tim.getImage().copy()
+                goodpix = (tim.inverr > 0)
+                ok = patch_image(img, goodpix)
+                assert(ok)
+
+                L = 3
+                table = True
+                try:
+                    Yo,Xo,Yi,Xi,[rim] = resample_with_wcs(wcs, tim.wcs.wcs,
+                                                          [img], L,table=table)
+                except OverlapError:
+                    print 'No overlap; skipping'
+                    continue
+                assert(np.all(np.isfinite(rim)))
+                print 'Pixels in range:', len(Yo)
+
+                w = 1. / tim.sig1**2
+                mask = (tim.inverr > 0)[Yi,Xi]
+                # rmask2 = (rmask & 2)
+                # rmask2 * coimg
+                coimg[Yo,Xo] += rim * w * mask
+                # rmask2 * cow
+                cow  [Yo,Xo] +=       w * mask
+            coimg /= cow
+            coimg[cow == 0] = 0.
+            
+            plt.clf()
+            plt.imshow(coimg, interpolation='nearest', origin='lower',
+                       cmap='gray', vmin=-3*sig1, vmax=10*sig1)
+            plt.colorbar()
+            plt.title('Coadded data (2)')
+            ps.savefig()
+
+            cotim = Image(data=coimg, invvar=cow, psf=psf,
+                          wcs=ConstantFitsWcs(wcs), sky=ConstantSky(0.),
+                          photocal=LinearPhotoCal(1., band=bandname),
+                          name='L1b coadd')
+            cotim.sig1 = 1. / np.sqrt(np.median(cow))
+
+            cotr = Tractor([cotim], subcat)
+            
+            R = cotr.optimize_forced_photometry(
+                minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
+                fitstats=True, 
+                variance=True, shared_params=False,
+                wantims=wantims, negfluxval=0.1*sig1, **kwa)
+            if opt.ceres:
+                term = R.ceres_status['termination']
+                print 'Ceres termination status:', term
+                if term != 0:
+                    raise RuntimeError('Ceres terminated with status %i' %
+                                       term)
+            if opt.save_fits:
+                (dat,mod,ie,chi,roi) = ims1[0]
+                tag = 'l1b-coadd-fit-%s-w%i' % (tile.coadd_id, band)
+                pat = os.path.join(opt.outdir, '%s-%%s.fits' % tag)
+                for name,data in [('data',dat),('mod',mod),('chi',chi)]:
+                    fn = pat % name
+                    fitsio.write(fn, data, clobber=True)
+                    print 'Wrote', fn
+
+            Tx = T.copy()
+            nm = np.array([src.getBrightness().getBand(wanyband) for src in cat])
+            nm_ivar = flux_invvars
+            Tx.set(wband + '_nanomaggies', nm.astype(np.float32))
+            Tx.set(wband + '_nanomaggies_ivar', nm_ivar.astype(np.float32))
+            dnm = np.zeros(len(nm_ivar), np.float32)
+            okiv = (nm_ivar > 0)
+            dnm[okiv] = (1./np.sqrt(nm_ivar[okiv])).astype(np.float32)
+            okflux = (nm > 0)
+            mag = np.zeros(len(nm), np.float32)
+            mag[okflux] = (NanoMaggies.nanomaggiesToMag(nm[okflux])).astype(np.float32)
+            dmag = np.zeros(len(nm), np.float32)
+            ok = (okiv * okflux)
+            dmag[ok] = (np.abs((-2.5 / np.log(10.)) * dnm[ok] / nm[ok])).astype(np.float32)
+            mag[np.logical_not(okflux)] = np.nan
+            dmag[np.logical_not(ok)] = np.nan
+            Tx.set(wband + '_mag', mag)
+            Tx.set(wband + '_mag_err', dmag)
+            Tx.cut(inbounds)
+            Tx.writeto(os.path.join(opt.outdir, 'coadd-l1b-phot-%s.fits' % tile.coadd_id), header=hdr)
+                    
+            subcat.setParams(p0)
+
+                    
         R = tractor.optimize_forced_photometry(
             minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
             fitstats=True, 
