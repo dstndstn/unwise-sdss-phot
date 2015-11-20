@@ -1354,6 +1354,10 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             mod = comod
             chi = (codat - comod) * np.sqrt(coiv)
 
+            fitsio.write('coadd-l1b-%s-w%i-img.fits' % (tile.coadd_id, band), codat)
+            fitsio.write('coadd-l1b-%s-w%i-mod.fits' % (tile.coadd_id, band), comod)
+            fitsio.write('coadd-l1b-%s-w%i-ivard.fits' % (tile.coadd_id, band), coiv)
+
         if ps:
             plt.clf()
             plt.imshow(dat, interpolation='nearest', origin='lower',
