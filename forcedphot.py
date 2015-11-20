@@ -729,8 +729,6 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                           (coadd_id, f.scan_id, f.frame_num, band))
         print 'Looking for unWISE mask', fn
         if os.path.exists(fn):
-            #fullumask = fitsio.read(fn)
-            #umask = fullumask[slc]
             umask = fitsio.FITS(fn)[0][slc]
         else:
             tgzfn = os.path.join(unwdir, 
@@ -750,8 +748,6 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                 raise RuntimeError('Failed to untar mask file')
             print txt
             fn = os.path.join(tempdir, umaskfn)
-            #fullumask = fitsio.read(fn)
-            #umask = fullmask[slc]
             umask = fitsio.FITS(fn)[0][slc]
 
             os.unlink(os.path.join(tempdir, umaskfn))
@@ -803,8 +799,7 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         wcs = wcs.get_subimage(x0, y0, w, h)
         
         twcs = ConstantFitsWcs(wcs)
-        sky = 0.
-        tsky = ConstantSky(sky)
+        tsky = ConstantSky(0.)
 
         tim = Image(data=img, inverr=inverr, psf=psf, wcs=twcs,
                     sky=tsky, photocal=LinearPhotoCal(1., band=bandname),
@@ -1008,25 +1003,27 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         wband = 'w%i' % band
 
         if opt.l1b:
-            tims = _unwise_l1b_tractor_images(thisdir, '.', tile.coadd_id,
-                                              band, wanyband, opt.psffn, opt.l1b_sky,
-                                              opt.l1b_sky_est)
-            tim = tims[0]
+            tims = _unwise_l1b_tractor_images(
+                thisdir, '.', tile.coadd_id, band, wanyband, opt.psffn,
+                opt.l1b_sky, opt.l1b_sky_est)
+            sig1 = np.mean([tim.sig1 for tim in tims])
+            ## Assume the same PSF is used in all images.
+            psf = tims[0].psf
         else:
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
                                         opt.psffn)
             tims = [tim]
-
+            sig1 = tim.sig1
+            psf  = tim.psf
+            
         # Surface-brightness approximation
         minsig = getattr(opt, 'minsig%i' % band)
-        sig1 = tim.sig1
         minsb = sig1 * minsig
         print 'Sigma1:', sig1, 'minsig', minsig, 'minsb', minsb
 
         # Render the PSF profile for figuring out source radii for
         # approximation purposes.
         R = 100
-        psf = tim.psf
         psf.radius = R
         pat = psf.getPointSourcePatch(0., 0.)
         assert(pat.x0 == pat.y0)
@@ -1091,7 +1088,6 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
                 
         # Use pixelized PSF models for bright sources?
         bright_mods = ((band == 1) and (opt.bright1 is not None))
-
         if bright_mods:
             set_bright_psf_mods(cat, WISE, T, opt.bright1, band, tile, wcs, sourcerad)
 
