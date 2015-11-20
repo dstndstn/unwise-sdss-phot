@@ -592,7 +592,7 @@ def _get_photoobjs(tile, wcs, bandnum, existOnly):
 
 
 def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
-                               psffn, l1bsky, l1bskyest):
+                               psffn, l1bsky, l1bskyest, use_unc=False):
     from unwise_coadd import walk_wcs_boundary, zeropointToScale
 
     # All this is required to get the L1b image extents
@@ -675,8 +675,9 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         slc = (slice(y0, y1), slice(x0, x1))
 
         img = fitsio.FITS(intfn)[0][slc]
-        #unc = fitsio.FITS(uncfn)[0][slc]
         mask = fitsio.FITS(maskfn)[0][slc]
+        if use_unc:
+            unc = fitsio.FITS(uncfn)[0][slc]
 
         print 'Read', img.shape, img.dtype, 'image'
         print 'Image median', np.median(img), 'vs sky', f.sky1
@@ -699,13 +700,18 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
 
         maskbits = sum([1<<bit for bit in badbits])
         goodmask = ((mask & maskbits) == 0)
-        #goodmask[unc == 0] = False
         goodmask[np.logical_not(np.isfinite(img))] = False
-        #goodmask[np.logical_not(np.isfinite(unc))] = False
 
-        invvar = np.zeros_like(img)
-        invvar[goodmask] = iv
+        if use_unc:
+            goodmask[unc == 0] = False
+            goodmask[np.logical_not(np.isfinite(unc))] = False
 
+            inverr = 1. / unc
+            inverr[np.logical_not(goodmask)] = 0.
+        else:
+            inverr = np.zeros_like(img)
+            inverr[goodmask] = np.sqrt(iv)
+        
         # also mask out regions outside the coadd frame.
         #print 'Clipped polygon:', cpoly
         xx,yy = np.meshgrid(np.arange(x0, x1), np.arange(y0, y1))
@@ -714,7 +720,7 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         inside = point_in_poly(u, v, cpoly)
         print np.sum(inside), 'of', xx.size, 'pixels are inside coadd bounds'
         #print 'inside:', inside.shape
-        invvar[np.logical_not(inside)] = 0.
+        inverr[np.logical_not(inside)] = 0.
 
         # Add unWISE mask
         fn = os.path.join(unwdir, 
@@ -723,8 +729,6 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                           (coadd_id, f.scan_id, f.frame_num, band))
         print 'Looking for unWISE mask', fn
         if os.path.exists(fn):
-            #fullumask = fitsio.read(fn)
-            #umask = fullumask[slc]
             umask = fitsio.FITS(fn)[0][slc]
         else:
             tgzfn = os.path.join(unwdir, 
@@ -744,17 +748,15 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
                 raise RuntimeError('Failed to untar mask file')
             print txt
             fn = os.path.join(tempdir, umaskfn)
-            #fullumask = fitsio.read(fn)
-            #umask = fullmask[slc]
             umask = fitsio.FITS(fn)[0][slc]
 
             os.unlink(os.path.join(tempdir, umaskfn))
             os.rmdir(os.path.join(tempdir, maskdir))
             os.rmdir(tempdir)
 
-        n0 = np.sum(invvar > 0)
-        invvar[umask > 0] = 0.
-        print 'Masked', n0 - np.sum(invvar > 0), 'pixels from unWISE'
+        n0 = np.sum(inverr > 0)
+        inverr[umask > 0] = 0.
+        print 'Masked', n0 - np.sum(inverr > 0), 'pixels from unWISE'
 
         if l1bskyest:
             fullimg  = fitsio.read(intfn)
@@ -777,25 +779,29 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
 
         # -> nanomaggies
         img *= zpscale
-        # the invvar is *already* in nanomaggies units.
 
+        if use_unc:
+            inverr /= zpscale
+        else:
+            # 'iv' was *already* in nanomaggies units.
+            pass
+            
         if cosky != 0:
             print 'Subtracting off coadd sky level of', cosky
             img -= cosky
 
-        img[invvar == 0] = 0
+        img[inverr == 0] = 0
         assert(np.all(np.isfinite(img)))
-        assert(np.all(np.isfinite(invvar)))
+        assert(np.all(np.isfinite(inverr)))
 
         # WCS for the sub-image...
         h,w = img.shape
         wcs = wcs.get_subimage(x0, y0, w, h)
         
         twcs = ConstantFitsWcs(wcs)
-        sky = 0.
-        tsky = ConstantSky(sky)
+        tsky = ConstantSky(0.)
 
-        tim = Image(data=img, invvar=invvar, psf=psf, wcs=twcs,
+        tim = Image(data=img, inverr=inverr, psf=psf, wcs=twcs,
                     sky=tsky, photocal=LinearPhotoCal(1., band=bandname),
                     name='WISE L1b %s-%i W%i' % (f.scan_id, f.frame_num, band))
         tim.sig1 = np.sqrt(1./iv)
@@ -997,25 +1003,27 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
         wband = 'w%i' % band
 
         if opt.l1b:
-            tims = _unwise_l1b_tractor_images(thisdir, '.', tile.coadd_id,
-                                              band, wanyband, opt.psffn, opt.l1b_sky,
-                                              opt.l1b_sky_est)
-            tim = tims[0]
+            tims = _unwise_l1b_tractor_images(
+                thisdir, '.', tile.coadd_id, band, wanyband, opt.psffn,
+                opt.l1b_sky, opt.l1b_sky_est)
+            sig1 = np.mean([tim.sig1 for tim in tims])
+            ## Assume the same PSF is used in all images.
+            psf = tims[0].psf
         else:
             tim = _unwise_tractor_image(thisdir, tile.coadd_id, band, wanyband,
                                         opt.psffn)
             tims = [tim]
-
+            sig1 = tim.sig1
+            psf  = tim.psf
+            
         # Surface-brightness approximation
         minsig = getattr(opt, 'minsig%i' % band)
-        sig1 = tim.sig1
         minsb = sig1 * minsig
         print 'Sigma1:', sig1, 'minsig', minsig, 'minsb', minsb
 
         # Render the PSF profile for figuring out source radii for
         # approximation purposes.
         R = 100
-        psf = tim.psf
         psf.radius = R
         pat = psf.getPointSourcePatch(0., 0.)
         assert(pat.x0 == pat.y0)
@@ -1080,7 +1088,6 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
                 
         # Use pixelized PSF models for bright sources?
         bright_mods = ((band == 1) and (opt.bright1 is not None))
-
         if bright_mods:
             set_bright_psf_mods(cat, WISE, T, opt.bright1, band, tile, wcs, sourcerad)
 
