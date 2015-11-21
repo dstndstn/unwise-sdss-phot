@@ -755,6 +755,8 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
             os.rmdir(tempdir)
 
         n0 = np.sum(inverr > 0)
+        # Bit value 0x1: rchi pixel was bad
+        # Bit value 0x2: dilated version of that
         inverr[umask > 0] = 0.
         print 'Masked', n0 - np.sum(inverr > 0), 'pixels from unWISE'
 
@@ -1289,7 +1291,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
         if opt.l1b:
             # Try creating a coadd and photometering that, just for kicks.
-            p0 = tractor.getParams()
+            p0 = subcat.getParams()
 
             coimg = np.zeros((H,W), np.float32)
             cow   = np.zeros((H,W), np.float32)
