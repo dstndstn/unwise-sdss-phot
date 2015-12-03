@@ -692,6 +692,9 @@ def _unwise_l1b_tractor_images(unwdir, l1bdir, coadd_id, band, bandname,
         zpscale = 1. / zeropointToScale(zp)
         #print 'Zeropoint:', zp, '-> scale', zpscale
 
+        hdr = fitsio.read_header(intfn, ext=0)
+        print 'Zeropoint', zp, 'vs header', hdr['MAGZP']
+
         badbits = [0,1,2,3,4,5,6,7, 9, 
                    10,11,12,13,14,15,16,17,18,
                    21,26,27,28]
@@ -1285,7 +1288,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             p0 = tractor.getParams()
 
             coimg = np.zeros((H,W), np.float32)
-            coie  = np.zeros((H,W), np.float32)
+            coiv  = np.zeros((H,W), np.float32)
 
             ktim = 0
             for itim,tim in enumerate(tims):
@@ -1296,37 +1299,37 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
                 tr.optimizer = tractor.optimizer
                 kwa = {}
                 
-                R = tr.optimize_forced_photometry(
-                    minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
-                    variance=True, shared_params=False,
-                    wantims=False, negfluxval=0.1*sig1, **kwa)
-                if opt.ceres:
-                    term = R.ceres_status['termination']
-                    print 'Ceres termination status:', term
-                    if term != 0:
-                        raise RuntimeError('Ceres terminated with status %i' %
-                                           term)
-                if len(srci):
-                    IV = R.IV
-                    flux_invvars[srci] = IV[:len(srci)]
-                Tx = T.copy()
-                nm = np.array([src.getBrightness().getBand(wanyband) for src in cat])
-                nm_ivar = flux_invvars
-                Tx.set(wband + '_nanomaggies', nm.astype(np.float32))
-                Tx.set(wband + '_nanomaggies_ivar', nm_ivar.astype(np.float32))
-                dnm = np.zeros(len(nm_ivar), np.float32)
-                okiv = (nm_ivar > 0)
-                dnm[okiv] = (1./np.sqrt(nm_ivar[okiv])).astype(np.float32)
-                okflux = (nm > 0)
-                mag = np.zeros(len(nm), np.float32)
-                mag[okflux] = (NanoMaggies.nanomaggiesToMag(nm[okflux])).astype(np.float32)
-                dmag = np.zeros(len(nm), np.float32)
-                ok = (okiv * okflux)
-                dmag[ok] = (np.abs((-2.5 / np.log(10.)) * dnm[ok] / nm[ok])).astype(np.float32)
-                mag[np.logical_not(okflux)] = np.nan
-                dmag[np.logical_not(ok)] = np.nan
-                Tx.set(wband + '_mag', mag)
-                Tx.set(wband + '_mag_err', dmag)
+                # R = tr.optimize_forced_photometry(
+                #     minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
+                #     variance=True, shared_params=False,
+                #     wantims=False, negfluxval=0.1*sig1, **kwa)
+                # if opt.ceres:
+                #     term = R.ceres_status['termination']
+                #     print 'Ceres termination status:', term
+                #     if term != 0:
+                #         raise RuntimeError('Ceres terminated with status %i' %
+                #                            term)
+                # if len(srci):
+                #     IV = R.IV
+                #     flux_invvars[srci] = IV[:len(srci)]
+                # Tx = T.copy()
+                # nm = np.array([src.getBrightness().getBand(wanyband) for src in cat])
+                # nm_ivar = flux_invvars
+                # Tx.set(wband + '_nanomaggies', nm.astype(np.float32))
+                # Tx.set(wband + '_nanomaggies_ivar', nm_ivar.astype(np.float32))
+                # dnm = np.zeros(len(nm_ivar), np.float32)
+                # okiv = (nm_ivar > 0)
+                # dnm[okiv] = (1./np.sqrt(nm_ivar[okiv])).astype(np.float32)
+                # okflux = (nm > 0)
+                # mag = np.zeros(len(nm), np.float32)
+                # mag[okflux] = (NanoMaggies.nanomaggiesToMag(nm[okflux])).astype(np.float32)
+                # dmag = np.zeros(len(nm), np.float32)
+                # ok = (okiv * okflux)
+                # dmag[ok] = (np.abs((-2.5 / np.log(10.)) * dnm[ok] / nm[ok])).astype(np.float32)
+                # mag[np.logical_not(okflux)] = np.nan
+                # dmag[np.logical_not(ok)] = np.nan
+                # Tx.set(wband + '_mag', mag)
+                # Tx.set(wband + '_mag_err', dmag)
                         
                 # Now, patch the image and resample to coadd space,
                 # and then photometer that image
@@ -1363,12 +1366,7 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
                 mask = (tim.inverr > 0)[Yi,Xi]
 
-                thiscoimg = np.zeros_like(coimg)
-                thiscoie  = np.zeros_like(coie)
-                thiscoimg[Yo,Xo] += rim * mask
-                thiscoie [Yo,Xo] += 1./tim.sig1 * mask
-
-                if np.sum(thiscoie) == 0:
+                if np.sum(mask) == 0:
                     print 'No overlapping pixels'
                     continue
 
@@ -1376,6 +1374,10 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
                 coimg[Yo,Xo] += mask * wt * rim
                 coiv [Yo,Xo] += mask * wt
 
+                # thiscoimg = np.zeros_like(coimg)
+                # thiscoie  = np.zeros_like(coiv)
+                # thiscoimg[Yo,Xo] += rim * mask
+                # thiscoie [Yo,Xo] += 1./tim.sig1 * mask
                 # cotim = Image(data=thiscoimg, inverr=thiscoie, psf=psf,
                 #               wcs=ConstantFitsWcs(wcs), sky=ConstantSky(0.),
                 #               photocal=LinearPhotoCal(1., band=wanyband),
@@ -1433,6 +1435,18 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
             ## Now photometer the coadd we just made, which patches from the unWISE coadd.
             coimg /= coiv
             coimg[coiv == 0] = 0.
+
+
+            mn,mx = np.percentile(cotim.getImage(), [25,99])
+            plt.clf()
+            dimshow(cotim.getImage(), vmin=mn, vmax=mx)
+            plt.title('unWISE coadd')
+            ps.savefig()
+
+            plt.clf()
+            dimshow(coimg, vmin=mn, vmax=mx)
+            plt.title('ad-hoc coadd')
+            ps.savefig()
 
             cotim = Image(data=coimg, invvar=coiv, psf=psf,
                           wcs=ConstantFitsWcs(wcs), sky=ConstantSky(0.),
