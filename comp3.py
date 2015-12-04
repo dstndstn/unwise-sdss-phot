@@ -3147,11 +3147,194 @@ def coadd_demo():
 
         
 def main():
-
-    ps = PlotSequence('l1b')
+    from glob import glob
+    from collections import Counter
+    
+    ps = PlotSequence('l1b6')
 
     tile = '1384p106'
 
+    #T1 = fits_table('vanilla3/phot-%s.fits' % tile)
+    #T2 = fits_table('l1b-5b/coadd-l1b-phot-%s.fits' % tile)
+
+    # L1b
+    T1 = fits_table('l1b-6/phot-%s.fits' % tile)
+    # coadd patched from coadd
+    T2 = fits_table('l1b-6/coadd-l1b-phot-%s.fits' % tile)
+    print len(T1), len(T2), 'sources'
+    
+    mn = 1e-2
+    plt.clf()
+    plt.loglog(np.maximum(mn, T1.w1_nanomaggies),
+               np.maximum(mn, T2.w1_nanomaggies), 'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('L1b flux (nmgy)')
+    ax = plt.axis()
+    mnmx = [min(ax[0],ax[2]), max(ax[1],ax[3])]
+    plt.plot(mnmx, mnmx, 'k-', alpha=0.25)
+    plt.axis(ax)
+    ps.savefig()
+
+    chi = ((T2.w1_nanomaggies - T1.w1_nanomaggies) /
+           np.sqrt(1./T1.w1_nanomaggies_ivar + 1./T2.w1_nanomaggies_ivar))
+    
+    plt.clf()
+    plt.semilogx(T1.w1_nanomaggies, np.clip(chi,-10,10),
+                 'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('(L1b flux - Coadd flux) / Error')
+    plt.ylim(-10, 10)
+    ps.savefig()
+
+    plt.clf()
+    n,b,p = plt.hist(np.clip(chi, -10,10), range=(-10,10), bins=100, histtype='step', color='b')
+    xx = np.linspace(-10,10,500)
+    db = b[1]-b[0]
+    plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*len(T1))
+    plt.xlabel('(L1b flux - Coadd flux) / Error')
+    ps.savefig()
+
+    mags = np.arange(25, 11, -1)
+    for mhi,mlo in zip(mags, mags[1:]):
+        I = np.flatnonzero((T1.w1_mag >= mlo) * (T1.w1_mag < mhi))
+        plt.clf()
+        n,b,p = plt.hist(np.clip(chi[I], -10,10),
+                         range=(-10,10), bins=100, histtype='step', color='b')
+        xx = np.linspace(-10,10,500)
+        db = b[1]-b[0]
+        plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*sum(n))
+        plt.xlabel('(L1b flux - Coadd flux) / Error')
+        plt.title('W1 mag %g to %g' % (mlo,mhi))
+        ps.savefig()
+
+
+
+
+    # L1b
+    T1 = fits_table('l1b-6/phot-%s.fits' % tile)
+    # coadd patched from coadd
+    T2 = fits_table('l1b-6/coadd-l1b-phot-%s.fits' % tile)
+    # regular coadd
+    T3 = fits_table('vanilla3/phot-%s.fits' % tile)
+    print len(T1), len(T2), 'sources'
+
+    chi13 = ((T1.w1_nanomaggies - T3.w1_nanomaggies) /
+           np.sqrt(1./T1.w1_nanomaggies_ivar + 1./T3.w1_nanomaggies_ivar))
+    chi23 = ((T2.w1_nanomaggies - T3.w1_nanomaggies) /
+           np.sqrt(1./T2.w1_nanomaggies_ivar + 1./T3.w1_nanomaggies_ivar))
+    chi12 = ((T1.w1_nanomaggies - T2.w1_nanomaggies) /
+           np.sqrt(1./T1.w1_nanomaggies_ivar + 1./T2.w1_nanomaggies_ivar))
+
+    I = np.flatnonzero((T1.w1_mag > 15) * (T1.w1_mag < 22))
+    print 'chi12 mean', np.mean(chi12[I])
+    print 'chi12 std', np.std(chi12[I])
+    pcts = np.percentile(chi12[I], [16,50,84])
+    print 'chi12 dpct', pcts[2]-pcts[1], pcts[1]-pcts[0]
+
+    print 'chi13 mean', np.mean(chi13[I])
+    print 'chi13 std', np.std(chi13[I])
+    pcts = np.percentile(chi13[I], [16,50,84])
+    print 'chi13 dpct', pcts[2]-pcts[1], pcts[1]-pcts[0]
+    
+
+    kwa = dict(range=(-3,3), bins=50, histtype='step')
+    plt.clf()
+    n,b,p13 = plt.hist(np.clip(chi13, -10,10), color='b', lw=3, alpha=0.5,
+                       **kwa)
+    n,b,p12 = plt.hist(np.clip(chi12, -10,10), color='r', **kwa)
+
+    xx = np.linspace(-10,10,500)
+    db = b[1]-b[0]
+    plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*len(T1),
+             'k--')
+    
+    p13 = plt.plot([0],[0], color='b', lw=3, alpha=0.5)
+    p12 = plt.plot([0],[0], color='r')
+    pg  = plt.plot([0],[0], color='k', ls='--')
+    
+    #plt.legend((p12[0], p13[0]), ('Coadd-patched coadd', 'Regular coadd'))
+    plt.legend((p12[0], p13[0], pg[0]),
+               ('Coadd-patched coadd', 'Regular coadd', 'Gaussian'))
+    plt.xlabel('(L1b flux - Coadd flux) / Error')
+    plt.xlim([-3,3])
+    ps.savefig()
+
+    
+        
+    sys.exit(0)
+
+    
+    # dirnm = 'l1b-4'
+    dirnm = 'l1b-5'
+
+    fns = glob(os.path.join(dirnm, 'coadd-l1bco-*-phot-*.fits'))
+    TT = []
+    for fn in fns:
+        T = fits_table(fn, columns=['w1_nanomaggies_co', 'w1_nanomaggies', 'objid'])
+        T.cut((T.w1_nanomaggies_co > 1e2) * (T.w1_nanomaggies_co < 1e3))
+
+        TT.append(T)
+    T = merge_tables(TT)
+    del TT
+    print 'Total of', len(T), 'L1b sources'
+
+    mn = 1e-2
+    plt.clf()
+    plt.loglog(np.maximum(mn, T.w1_nanomaggies_co),
+               np.maximum(mn, T.w1_nanomaggies), 'b.', alpha=0.1)
+    plt.xlabel('Coadd flux (nmgy)')
+    plt.ylabel('L1b flux (nmgy)')
+    ps.savefig()
+
+    ids = Counter(T.objid)
+    for objid,count in ids.most_common(10):
+        t = T[T.objid == objid]
+        print len(t), 'with objid', objid
+        
+        plt.clf()
+        plt.plot(t.w1_nanomaggies, np.zeros(len(t)), 'b.')
+        plt.axvline(np.mean(t.w1_nanomaggies), color='b')
+        plt.axvline(t.w1_nanomaggies_co[0], color='r')
+        plt.xlabel('L1b flux (nmgy)')
+        ps.savefig()
+
+
+
+    if False:
+        mags = np.arange(25, 11, -1)
+        for mhi,mlo in zip(mags, mags[1:]):
+            I = np.flatnonzero((T1.w1_mag >= mlo) * (T1.w1_mag < mhi))
+            plt.clf()
+            n,b,p = plt.hist(np.clip(chi[I], -10,10),
+                             range=(-10,10), bins=100, histtype='step', color='b')
+            xx = np.linspace(-10,10,500)
+            db = b[1]-b[0]
+            plt.plot(xx, db * 1./np.sqrt(2.*np.pi) * np.exp(-0.5 * xx**2)*sum(n))
+            plt.xlabel('(L1b flux - Coadd flux) / Error')
+            plt.title('W1 mag %g to %g' % (mlo,mhi))
+            ps.savefig()
+
+
+        
+
+    if False:
+        T1 = fits_table(os.path.join(dirnm, 'coadd-l1b-phot-%s.fits' % tile))
+        T2 = fits_table(os.path.join(dirnm, 'phot-%s.fits' % tile))
+    
+        mn = 1e-2
+        plt.clf()
+        plt.loglog(np.maximum(mn, T1.w1_nanomaggies),
+                   np.maximum(mn, T2.w1_nanomaggies), 'b.', alpha=0.1)
+        plt.xlabel('Coadd flux (nmgy)')
+        plt.ylabel('L1b flux (nmgy)')
+        ps.savefig()
+        
+
+
+
+
+
+    
     #T1 = fits_table('vanilla2/phot-%s.fits' % tile)
     #T2 = fits_table('l1b-sky/phot-%s.fits' % tile)
     T1 = fits_table('vanilla3/phot-%s.fits' % tile)

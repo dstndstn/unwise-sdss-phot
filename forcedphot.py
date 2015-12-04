@@ -1292,13 +1292,13 @@ def one_tile(tile, opt, savepickle, ps, tiles, tiledir, tempoutdir,
 
             ktim = 0
             for itim,tim in enumerate(tims):
-                print 'Forced-photometering', tim
-                tractor.setParams(p0)
-                tr = Tractor([tim], subcat)
-                tr.freezeParam('images')
-                tr.optimizer = tractor.optimizer
-                kwa = {}
-                
+                # print 'Forced-photometering', tim
+                # tractor.setParams(p0)
+                # tr = Tractor([tim], subcat)
+                # tr.freezeParam('images')
+                # tr.optimizer = tractor.optimizer
+                # kwa = {}
+                # 
                 # R = tr.optimize_forced_photometry(
                 #     minsb=minsb, mindlnp=1., sky=opt.sky, minFlux=None,
                 #     variance=True, shared_params=False,
