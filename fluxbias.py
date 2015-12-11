@@ -1,3 +1,4 @@
+import sys
 import fitsio
 import matplotlib
 matplotlib.use('Agg')
@@ -8,10 +9,66 @@ from tractor import *
 from astrometry.util.plotutils import *
 from astrometry.util.fits import *
 
+def expected_flux(F, s):
+    lam = F / 2.
+
+    mn = lam
+    st = np.sqrt(lam)
+    lo = int(np.floor(max(0, mn - 10.*st)))
+    hi = int(np.ceil (       mn + 10.*st))
+    print 'lam', lam, 'lo,hi', lo,hi
+
+    f1,f2 = np.meshgrid(np.arange(lo, hi+1), np.arange(lo, hi+1))
+    #print 'f1', f1.dtype
+
+    poiss = []
+    p = 1.
+    p *= np.exp(-lam)
+    for f in range(1, lo):
+        p *= lam / f
+    for f in range(lo, hi+1):
+        if f > 0:
+            p *= lam / f
+        poiss.append(p)
+    poiss = np.array(poiss)
+    #print 'Poisson factors:', poiss
+    #np.exp(-2.*lam) * 
+    fexp = 2. * np.sum(
+        (2.*f1*f2 + s*(f1+f2)) / (f1+f2+2.*s) *
+        poiss[:,np.newaxis] * poiss[np.newaxis,:])
+    print '<f>', fexp
+    return fexp
+    
+def analytic(ps):
+    for sky in [10, 30, 100, 300, 1000]:
+        fexp = []
+        ftrue = []
+        for F in np.logspace(0., 3., 15):
+            print 'Flux', F
+            f = expected_flux(F, sky)
+            fexp.append(f)
+            ftrue.append(F)
+        fexp = np.array(fexp)
+        ftrue = np.array(ftrue)
+        plt.clf()
+        plt.plot(ftrue, fexp / ftrue, 'b.')
+        plt.xlabel('True flux')
+        plt.ylabel('Measured flux / True flux')
+        plt.title('Sky=%g' % sky)
+        plt.xscale('log')
+        plt.xlim(min(ftrue)*0.9, max(ftrue)*1.1)
+        ps.savefig()
+
+    
 if __name__ == '__main__':
     ps = PlotSequence('fluxbias')
 
-    psf = NCircularGaussianPSF([4.], [1.])
+    analytic(ps)
+    sys.exit(0)
+    
+    
+    #psf = NCircularGaussianPSF([4.], [1.])
+    psf = NCircularGaussianPSF([0.88], [1.])
     #W,H = 50,50
     W,H = 100,100
     cx,cy = W/2., H/2.
@@ -20,7 +77,10 @@ if __name__ == '__main__':
     tim = Image(data=img, inverr=np.ones_like(img)/sig1, psf=psf,
                 photocal=LinearPhotoCal(1.))
 
-    src = PointSource(PixPos(cx, cy), Flux(1.))
+    #src = PointSource(PixPos(cx, cy), Flux(1.))
+    # right between pixels in x,y
+    src = PointSource(PixPos(int(cx)+0.5, int(cy)+0.5), Flux(1.))
+    #src = PointSource(PixPos(int(cx)+0.5, int(cy)), Flux(1.))
 
     tractor = Tractor([tim], [src])
 
@@ -37,8 +97,6 @@ if __name__ == '__main__':
     # Estimate pre-pixel error ~ flux
     # Forced-photometer
     
-    readnoise = 1.
-
     #tractor.printThawedParams()
     
     tractor.freezeAllRecursive()
@@ -54,9 +112,14 @@ if __name__ == '__main__':
     p0 = tractor.getParams()
     print 'P0:', p0
 
-    truesky = 10.
+    # WISE W1: gain 3.1 e-/DN, sky 14 DN/pix, 24 exposures
+    truesky = 3.1 * 14. * 24
+    #truesky = 30.
 
-    for measure_sky in [True, False]:
+    readnoise = 3.1
+
+    #for measure_sky in [True, False]:
+    for measure_sky in [False]:
 
         if measure_sky:
             tt = 'with measured sky'
@@ -69,17 +132,27 @@ if __name__ == '__main__':
         skyest = []
         
         #for flux in [10., 30., 100., 300., 1000., 3000.]:
-        for flux in np.logspace(2., 6., 11):
-            for isample in range(10):
+        for flux in np.logspace(1., 5., 10):
+        #for flux in np.logspace(1., 4., 13):
+
+            for isample in range(100):
+
+                # pimg = np.random.poisson(flux * trueimg)
+                # samplesky = np.random.poisson(truesky, size=pimg.shape)
+                # pimg += samplesky
+                # # Gain?
+                # img = pimg.astype(np.float32)
+                # img += readnoise * np.random.normal(size=pimg.shape)
+
+                #img = flux * trueimg + truesky
                 pimg = np.random.poisson(flux * trueimg)
-                pimg += np.random.poisson(truesky, size=pimg.shape)
-                # Gain?
-                img = pimg.astype(np.float32)
-                img += readnoise * np.random.normal(size=pimg.shape)
-    
+                #print 'pimg flux: sum', np.sum(pimg), 'vals', np.unique(pimg)
+                img = pimg.astype(np.float32) + truesky
+                print 'Image range:', img.min(), img.max()
+                
                 # Poisson process: variance = mean
                 iv = np.maximum(0, 1./np.maximum(img, 1.))
-                print 'Invvar range:', iv.min(), iv.max()
+                #print 'Invvar range:', iv.min(), iv.max()
                 
                 if measure_sky:
                     # Typical dumb sky estimate
@@ -88,6 +161,8 @@ if __name__ == '__main__':
                 else:
                     sky = truesky
                 img -= sky
+
+                #print 'Sky:', truesky, 'vs sampled', np.mean(samplesky.astype(np.float32))
                 
                 tractor.setParams(p0)
     
@@ -104,14 +179,15 @@ if __name__ == '__main__':
                 skyest.append(sky)
                 fluxerr.append(1./np.sqrt(R.IV[0]))
                 
-                if isample == 0 and measure_sky:
+                if isample == 0 and False: # and measure_sky:
                     plt.clf()
                     plt.subplot(2,2,1)
                     #dimshow(np.log10(np.maximum(1e-3, flux * trueimg)))
                     tru = flux * trueimg
-                    mn,mx = np.percentile(tru, [25,99])
-                    mx = max(mx, truesky)
-                    ima = dict(vmin=mn, vmax=mx)
+                    #mn,mx = np.percentile(tru, [25,99])
+                    #mx = max(mx, truesky)
+                    #ima = dict(vmin=mn, vmax=mx)
+                    ima = dict(vmin=-100, vmax=1000)
                     dimshow(tru, **ima)
                     plt.title('true image')
                     plt.subplot(2,2,2)
@@ -148,10 +224,20 @@ if __name__ == '__main__':
         ps.savefig()
     
         plt.clf()
-        plt.semilogx(trueflux, (measflux - trueflux) / trueflux, 'b.')
+        plt.semilogx(trueflux, (measflux - trueflux) / trueflux,
+                     'b.', alpha=0.01)
         plt.xlabel('True flux')
         plt.ylabel('Measured flux fractional error')
-        plt.ylim(-0.5, 0.5)
+        # average over n samples
+        u,I = np.unique(trueflux, return_inverse=True)
+        for i in range(len(u)):
+            mf = measflux[i == I]
+            y = (mf - u[i]) / u[i]
+            #plt.plot(u[i], (np.mean(mf) - u[i]) / u[i], 'bx')
+            plt.errorbar(u[i], np.mean(y), yerr=np.std(y), ecolor='b', fmt='bx')
+        plt.xlim(min(u)*0.9, max(u)*1.1)
+        #plt.ylim(-0.5, 0.5)
+        plt.ylim(-0.05, 0.05)
         plt.axhline(0, color='k', alpha=0.25)
         plt.title(tt)
         ps.savefig()
